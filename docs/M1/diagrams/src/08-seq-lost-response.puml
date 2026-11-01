@@ -1,0 +1,47 @@
+@startuml seq-lost-response
+' DF-3: Recovery when the response to a data-changing request is lost
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam sequenceMessageAlign left
+autonumber
+
+actor User
+participant "Mobile app" as App
+database "OperationJournal" as Journal
+participant "Web service" as WS
+database "PostgreSQL" as DB
+
+User -> App : confirm SELL 50.00 USD
+App -> Journal : add(op-7f3c, SENDING)
+App -> WS : POST /api/v1/exchanges\nIdempotency-Key: op-7f3c
+
+alt Case A: server committed, response lost
+  WS -> DB : transaction committed (one SELL)
+  WS -x App : 201 response lost (radio link drops)
+else Case B: request never reached the server
+  App -x WS : request lost before arrival
+end
+
+App -> App : timeout after 15 s (or connection error)
+App -> Journal : update(op-7f3c, UNCERTAIN)
+App --> User : "Result not confirmed yet — we will check\nwhen the connection is back." New trades blocked.
+
+... connectivity restored (NetInfo + 2 s debounce) ...
+
+App -> WS : GET /api/v1/operations/op-7f3c (read, retryable)
+alt Case A
+  WS -> DB : SELECT operation_record
+  WS --> App : 200 {outcome: COMPLETED, transaction}
+  App -> Journal : update(op-7f3c, COMPLETED)
+  App --> User : "Sale confirmed" (exactly one transaction)
+else Case B
+  WS --> App : 404 OPERATION_NOT_FOUND
+  App -> Journal : update(op-7f3c, NOT_EXECUTED)
+  App --> User : "The sale was not executed. Retry?"
+  User -> App : tap "Retry"
+  App -> WS : POST /api/v1/exchanges\nIdempotency-Key: op-7f3c (same key, same body)
+  WS --> App : 201 Created (or 409 RATE_CHANGED)
+end
+App -> WS : GET /api/v1/wallets, GET /api/v1/transactions
+App --> User : refreshed balances and history (server data wins)
+@enduml

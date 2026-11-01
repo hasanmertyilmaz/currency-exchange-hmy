@@ -1,0 +1,57 @@
+@startuml architecture
+!pragma layout smetana
+' Kantor Mobile — System architecture and data owners
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam componentStyle rectangle
+skinparam rectangle {
+  BorderColor #2E4A7D
+}
+skinparam component {
+  BackgroundColor #F7F9FC
+  BorderColor #2E4A7D
+}
+skinparam database {
+  BackgroundColor #EAF2E3
+  BorderColor #3B6E2E
+}
+
+rectangle "Mobile device (Android / iOS)\nReact Native + Expo" as device #FFFFFF {
+  component "UI screens\n(Rates, History, Wallets,\nExchange, Deposit, Transactions)" as ui
+  component "Repositories\n(cache-then-network reads)" as repos
+  component "ApiClient\n(timeouts, read retries,\nIdempotency-Key)" as api
+  component "SyncManager\n+ OperationJournal" as sync
+  component "ConnectivityMonitor\n(NetInfo, AppState)" as net
+  database "Local cache\n(AsyncStorage)\nNOT authoritative" as cache
+  database "SecureStore\n(access token)" as secure
+}
+
+cloud "Wireless segment\n(Wi-Fi / LTE / 5G)\nloss · delay · timeout" as wireless #FFF4E5
+
+rectangle "Web service (Java 21, Spring Boot 3)" as service #FFFFFF {
+  component "Security filter\n(JWT, per-user scoping)" as sec
+  component "REST controllers\n/api/v1" as ctrl
+  component "Domain services\n(ExchangeService, RateService,\nIdempotencyService)" as svc
+  component "NbpClient\n(3 s connect / 5 s read)" as nbpc
+  component "Scheduler\n(rate refresh)" as sched
+}
+
+database "PostgreSQL 16\nAUTHORITATIVE for users,\nwallets, transactions,\noperation outcomes" as db
+
+cloud "NBP Web API\napi.nbp.pl (table C)\nAUTHORITATIVE for rates" as nbp #FFF4E5
+
+ui --> repos
+repos --> cache
+repos --> api
+sync --> api
+net --> sync
+api --> secure
+api --> wireless : HTTPS / JSON
+wireless --> sec
+sec --> ctrl
+ctrl --> svc
+svc --> db : JDBC (transactions,\nrow locks)
+sched --> nbpc
+svc --> nbpc
+nbpc --> nbp : HTTPS / JSON
+@enduml

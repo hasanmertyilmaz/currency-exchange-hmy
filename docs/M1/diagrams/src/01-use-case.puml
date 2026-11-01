@@ -1,0 +1,63 @@
+@startuml use-case
+!pragma layout smetana
+' Kantor Mobile — UML Use Case Diagram (M1)
+left to right direction
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam usecase {
+  BackgroundColor #F7F9FC
+  BorderColor #2E4A7D
+}
+skinparam actorBorderColor #2E4A7D
+skinparam packageStyle rectangle
+
+actor "Guest" as Guest
+actor "Registered User" as User
+actor "NBP Web API" as NBP <<external system>>
+actor "Scheduler" as Timer <<system timer>>
+
+User -|> Guest
+
+rectangle "Kantor Mobile (mobile app + web service)" {
+  usecase "UC1 Register account" as UC1
+  usecase "UC2 Log in" as UC2
+  usecase "UC3 Log out" as UC3
+  usecase "UC4 View current rates" as UC4
+  usecase "UC5 View historical rates" as UC5
+  usecase "UC6 Add simulated funds" as UC6
+  usecase "UC7 Buy currency" as UC7
+  usecase "UC8 Sell currency" as UC8
+  usecase "UC9 View wallet balances" as UC9
+  usecase "UC10 View transaction history" as UC10
+  usecase "UC11 Browse cached data offline" as UC11
+  usecase "UC12 Synchronise after reconnection" as UC12
+  usecase "UC13 Resolve uncertain operation" as UC13
+  usecase "UC14 Refresh NBP rate tables" as UC14
+  usecase "Confirm rate and amount" as UCC
+}
+
+Guest --> UC1
+Guest --> UC2
+Guest --> UC4
+Guest --> UC5
+
+User --> UC3
+User --> UC6
+User --> UC7
+User --> UC8
+User --> UC9
+User --> UC10
+User --> UC11
+User --> UC12
+
+UC7 ..> UCC : <<include>>
+UC8 ..> UCC : <<include>>
+UC12 ..> UC13 : <<include>>
+UC11 ..> UC4 : <<extend>>\n(no connection)
+UC11 ..> UC9 : <<extend>>\n(no connection)
+UC11 ..> UC10 : <<extend>>\n(no connection)
+
+Timer --> UC14
+UC14 --> NBP
+UC5 --> NBP
+@enduml

@@ -1,0 +1,28 @@
+@startuml state-operation
+!pragma layout smetana
+' Client-side lifecycle of a data-changing operation (PendingOperation.status)
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam state {
+  BackgroundColor #F7F9FC
+  BorderColor #2E4A7D
+}
+
+[*] --> SENDING : user confirms\n(operationId generated)
+SENDING --> COMPLETED : 2xx response
+SENDING --> REJECTED : 4xx business error\n(422, 409)
+SENDING --> UNCERTAIN : timeout / connection lost /\n5xx after sending
+UNCERTAIN --> COMPLETED : GET /operations/{id}\n-> COMPLETED
+UNCERTAIN --> REJECTED : GET /operations/{id}\n-> REJECTED
+UNCERTAIN --> NOT_EXECUTED : GET /operations/{id}\n-> 404
+NOT_EXECUTED --> SENDING : user taps Retry\n(same operationId)
+NOT_EXECUTED --> [*] : user dismisses
+COMPLETED --> [*]
+REJECTED --> [*]
+
+note right of UNCERTAIN
+While any operation is UNCERTAIN,
+new deposits / trades are blocked and
+balances are labelled "pending confirmation".
+end note
+@enduml

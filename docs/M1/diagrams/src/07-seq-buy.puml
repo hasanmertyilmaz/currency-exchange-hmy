@@ -1,0 +1,49 @@
+@startuml seq-buy
+' DF-2: Data-changing action — buy currency with a stable operation identity
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam sequenceMessageAlign left
+autonumber
+
+actor User
+participant "Exchange screen" as UI
+participant "TransactionRepository" as Repo
+database "OperationJournal" as Journal
+participant "ApiClient" as Api
+participant "Web service" as WS
+database "PostgreSQL" as DB
+
+User -> UI : enter 100.00 EUR, tap "Review"
+UI --> User : confirmation (ask rate, PLN cost, NBP table no)
+User -> UI : tap "Confirm"
+UI -> Repo : exchange(BUY, EUR, 100.00, tableNo)
+Repo -> Repo : operationId = UUIDv4 (generated once)
+Repo -> Journal : add(operationId, payload, SENDING)
+Repo -> Api : POST /api/v1/exchanges\nIdempotency-Key: operationId (timeout 15 s, no auto-retry)
+Api -> WS : HTTPS request + JWT
+WS -> WS : validate JWT, body, amount limits
+WS -> DB : BEGIN
+WS -> DB : INSERT operation_record (user_id, operation_id, ...)
+note right of DB
+Primary key (user_id, operation_id) makes a
+concurrent duplicate wait, then conflict.
+Existing row -> return stored response (replay).
+end note
+WS -> DB : SELECT latest rate (EUR); compare table_no
+WS -> DB : SELECT wallets PLN, EUR FOR UPDATE\n(ordered by currency_code)
+alt PLN balance >= cost
+  WS -> DB : UPDATE wallet PLN -cost, EUR +100.00
+  WS -> DB : INSERT exchange_transaction
+  WS -> DB : UPDATE operation_record SET outcome = COMPLETED, response
+  WS -> DB : COMMIT
+  WS --> Api : 201 Created {transaction, balances}
+else insufficient funds
+  WS -> DB : UPDATE operation_record SET outcome = REJECTED, 422
+  WS -> DB : COMMIT (no wallet change)
+  WS --> Api : 422 INSUFFICIENT_FUNDS
+end
+Api --> Repo : result
+Repo -> Journal : update(status = COMPLETED or REJECTED)
+Repo --> UI : show result from server response
+UI --> User : success / rejection message, updated balances
+@enduml

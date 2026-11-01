@@ -1,0 +1,150 @@
+@startuml class-service
+!pragma layout smetana
+' Kantor Mobile — UML Class Diagram, web service (Java 21 / Spring Boot 3)
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #F7F9FC
+  BorderColor #2E4A7D
+}
+hide empty members
+
+package "service.api" {
+  class AuthController {
+    + register(req : RegisterRequest) : UserDto
+    + login(req : LoginRequest) : TokenDto
+    + me(principal : UUID) : UserDto
+  }
+  class RateController {
+    + current() : RateTableDto
+    + history(code : String, from : LocalDate, to : LocalDate) : RateHistoryDto
+  }
+  class WalletController {
+    + list(principal : UUID) : WalletListDto
+  }
+  class TransactionController {
+    + deposit(principal : UUID, operationId : UUID, req : DepositRequest) : TransactionResultDto
+    + exchange(principal : UUID, operationId : UUID, req : ExchangeRequest) : TransactionResultDto
+    + history(principal : UUID, page : int, size : int) : TransactionPageDto
+  }
+  class OperationController {
+    + status(principal : UUID, operationId : UUID) : OperationStatusDto
+  }
+}
+
+package "service.domain" {
+  class AuthService {
+    + register(email : String, password : String, displayName : String) : AppUser
+    + authenticate(email : String, password : String) : String
+  }
+  class RateService {
+    + latestTable() : List<ExchangeRate>
+    + history(code : String, from : LocalDate, to : LocalDate) : List<ExchangeRate>
+    + refreshFromNbp() : void
+  }
+  class ExchangeService {
+    + deposit(userId : UUID, operationId : UUID, amount : BigDecimal) : OperationOutcome
+    + exchange(userId : UUID, operationId : UUID, side : Side, code : String, amount : BigDecimal, rateTableNo : String) : OperationOutcome
+  }
+  class IdempotencyService {
+    + findOutcome(userId : UUID, operationId : UUID) : Optional<OperationRecord>
+    + requestHash(payload : Object) : String
+  }
+  class NbpClient {
+    - connectTimeout : Duration = 3 s
+    - readTimeout : Duration = 5 s
+    + fetchTableC() : NbpTable
+    + fetchHistory(code : String, from : LocalDate, to : LocalDate) : List<NbpRate>
+  }
+  class JwtService {
+    + issue(user : AppUser) : String
+    + verify(token : String) : UUID
+  }
+}
+
+package "service.persistence" {
+  class AppUser <<entity>> {
+    id : UUID
+    email : String
+    passwordHash : String
+    displayName : String
+    createdAt : Instant
+  }
+  class Currency <<entity>> {
+    code : String
+    name : String
+    active : boolean
+  }
+  class Wallet <<entity>> {
+    id : UUID
+    balance : BigDecimal
+    version : long
+    createdAt : Instant
+    updatedAt : Instant
+  }
+  class ExchangeRate <<entity>> {
+    id : long
+    tableNo : String
+    effectiveDate : LocalDate
+    bid : BigDecimal
+    ask : BigDecimal
+    fetchedAt : Instant
+  }
+  class ExchangeTransaction <<entity>> {
+    id : UUID
+    operationId : UUID
+    type : TransactionType
+    fromAmount : BigDecimal
+    toAmount : BigDecimal
+    rate : BigDecimal
+    createdAt : Instant
+  }
+  class OperationRecord <<entity>> {
+    userId : UUID
+    operationId : UUID
+    operationType : TransactionType
+    requestHash : String
+    outcome : OperationStatus
+    httpStatus : int
+    responseBody : String
+    createdAt : Instant
+  }
+  enum TransactionType {
+    DEPOSIT
+    BUY
+    SELL
+  }
+  enum OperationStatus {
+    COMPLETED
+    REJECTED
+  }
+}
+
+AuthController --> AuthService
+AuthService --> JwtService
+RateController --> RateService
+RateService --> NbpClient
+WalletController ..> Wallet : <<reads>>
+TransactionController --> ExchangeService
+OperationController --> IdempotencyService
+ExchangeService --> IdempotencyService
+ExchangeService --> RateService
+AuthService ..> AppUser : <<persists>>
+RateService ..> ExchangeRate : <<persists>>
+ExchangeService ..> Wallet : <<locks/updates>>
+ExchangeService ..> ExchangeTransaction : <<creates>>
+IdempotencyService ..> OperationRecord : <<reads/creates>>
+
+AppUser "1" -- "1..*" Wallet : owns >
+Wallet "*" --> "1" Currency
+ExchangeRate "*" --> "1" Currency
+AppUser "1" -- "0..*" ExchangeTransaction : makes >
+ExchangeTransaction "*" --> "0..1" Currency : from
+ExchangeTransaction "*" --> "1" Currency : to
+ExchangeTransaction "*" --> "0..1" ExchangeRate : priced by
+AppUser "1" -- "0..*" OperationRecord
+OperationRecord "1" --> "0..1" ExchangeTransaction : result
+ExchangeTransaction --> TransactionType
+OperationRecord --> OperationStatus
+@enduml

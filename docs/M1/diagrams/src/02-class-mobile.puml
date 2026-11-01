@@ -1,0 +1,133 @@
+@startuml class-mobile
+!pragma layout smetana
+' Kantor Mobile — UML Class Diagram, mobile client (React Native / Expo, TypeScript)
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #F7F9FC
+  BorderColor #2E4A7D
+}
+hide empty members
+
+package "mobile.network" {
+  class ApiClient {
+    - baseUrl : string
+    - readTimeoutMs : number = 8000
+    - writeTimeoutMs : number = 15000
+    + get<T>(path : string) : Promise<T>
+    + post<T>(path : string, body : object, operationId : UUID) : Promise<T>
+  }
+  class RetryPolicy {
+    - maxAttempts : number = 3
+    - baseDelayMs : number = 1000
+    - jitterRatio : number = 0.2
+    + shouldRetry(error : ApiError, attempt : number) : boolean
+    + delayFor(attempt : number) : number
+  }
+  class ApiError {
+    + kind : ErrorKind
+    + httpStatus : number?
+    + code : string?
+  }
+  enum ErrorKind {
+    OFFLINE
+    TIMEOUT
+    SERVER
+    VALIDATION
+    BUSINESS
+    UNAUTHENTICATED
+  }
+  class ConnectivityMonitor {
+    - online : boolean
+    + isOnline() : boolean
+    + subscribe(listener : (online : boolean) => void) : Unsubscribe
+  }
+}
+
+package "mobile.storage" {
+  class CacheStore {
+    + save<T>(key : string, entry : CachedEntry<T>) : Promise<void>
+    + load<T>(key : string) : Promise<CachedEntry<T>?>
+    + clearForUser(userId : UUID) : Promise<void>
+  }
+  class CachedEntry<T> {
+    + data : T
+    + fetchedAt : Date
+    + userId : UUID
+  }
+  class AuthStore {
+    - accessToken : string?
+    - expiresAt : Date?
+    + saveSession(token : string, expiresAt : Date) : Promise<void>
+    + clear() : Promise<void>
+  }
+  class OperationJournal {
+    + add(op : PendingOperation) : Promise<void>
+    + update(op : PendingOperation) : Promise<void>
+    + unresolved() : Promise<PendingOperation[]>
+  }
+  class PendingOperation {
+    + operationId : UUID
+    + type : OperationType
+    + payload : object
+    + status : PendingStatus
+    + createdAt : Date
+    + resultMessage : string?
+  }
+  enum OperationType {
+    DEPOSIT
+    BUY
+    SELL
+  }
+  enum PendingStatus {
+    SENDING
+    UNCERTAIN
+    COMPLETED
+    REJECTED
+    NOT_EXECUTED
+  }
+}
+
+package "mobile.data" {
+  class RatesRepository {
+    + currentRates() : Promise<CachedEntry<RateTable>>
+    + history(code : string, from : Date, to : Date) : Promise<CachedEntry<RatePoint[]>>
+  }
+  class WalletRepository {
+    + wallets() : Promise<CachedEntry<Wallet[]>>
+  }
+  class TransactionRepository {
+    + deposit(amount : Decimal) : Promise<PendingOperation>
+    + exchange(side : Side, code : string, amount : Decimal, rateTableNo : string) : Promise<PendingOperation>
+    + history(page : number) : Promise<CachedEntry<Transaction[]>>
+    + reconcile(op : PendingOperation) : Promise<PendingOperation>
+  }
+  class SyncManager {
+    - debounceMs : number = 2000
+    + onConnectivityRestored() : Promise<void>
+    + syncAll() : Promise<SyncResult>
+  }
+}
+
+ApiClient --> RetryPolicy : uses (reads only)
+ApiClient ..> ApiError : throws
+ApiError --> ErrorKind
+CachedEntry --o CacheStore
+OperationJournal o-- "0..*" PendingOperation
+PendingOperation --> OperationType
+PendingOperation --> PendingStatus
+ApiClient --> AuthStore : reads token
+
+RatesRepository --> ApiClient
+RatesRepository --> CacheStore
+WalletRepository --> ApiClient
+WalletRepository --> CacheStore
+TransactionRepository --> ApiClient
+TransactionRepository --> CacheStore
+TransactionRepository --> OperationJournal
+SyncManager --> ConnectivityMonitor : listens
+SyncManager --> TransactionRepository : reconcile first
+SyncManager --> WalletRepository
+SyncManager --> RatesRepository
+@enduml

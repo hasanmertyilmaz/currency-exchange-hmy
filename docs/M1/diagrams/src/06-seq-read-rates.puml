@@ -1,0 +1,42 @@
+@startuml seq-read-rates
+' DF-1: Normal read — view current rates (cache-then-network, retryable)
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam sequenceMessageAlign left
+autonumber
+
+actor User
+participant "Rates screen" as UI
+participant "RatesRepository" as Repo
+database "Local cache" as Cache
+participant "ApiClient" as Api
+participant "Web service" as WS
+database "PostgreSQL" as DB
+participant "NBP API" as NBP
+
+User -> UI : open Rates
+UI -> Repo : currentRates()
+Repo -> Cache : load("rates:current")
+Cache --> Repo : cached table + fetchedAt (if any)
+Repo --> UI : show cached data, label "Cached · updated <time>"
+Repo -> Api : GET /api/v1/rates/current (timeout 8 s)
+Api -> WS : HTTPS request
+WS -> DB : SELECT latest table C rows
+alt latest stored table older than refresh interval
+  WS -> NBP : GET /api/exchangerates/tables/C/?format=json
+  NBP --> WS : table C (bid / ask)
+  WS -> DB : INSERT ... ON CONFLICT DO NOTHING
+end
+DB --> WS : rate rows
+WS --> Api : 200 {tableNo, effectiveDate, fetchedAt, rates[]}
+Api --> Repo : RateTable
+Repo -> Cache : save("rates:current", data, now)
+Repo --> UI : show current data, label "Live · NBP table <tableNo>"
+
+note over Api, WS
+Network error, timeout, 502/503/504:
+retry up to 3 attempts (1 s, 2 s backoff ± 20 % jitter).
+After the last failure the cached data stays on screen
+with an "offline / could not refresh" banner.
+end note
+@enduml

@@ -1,0 +1,95 @@
+@startuml erd
+!pragma layout smetana
+' Kantor Mobile — Entity Relationship Diagram (PostgreSQL 16, crow's-foot notation)
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam linetype ortho
+skinparam class {
+  BackgroundColor #F7F9FC
+  BorderColor #2E4A7D
+}
+hide circle
+hide empty members
+
+entity "app_user" as app_user {
+  * id : UUID <<PK>>
+  --
+  * email : VARCHAR(254) <<UNIQUE>>
+  * password_hash : VARCHAR(100)
+  * display_name : VARCHAR(80)
+  * created_at : TIMESTAMPTZ
+}
+
+entity "currency" as currency {
+  * code : CHAR(3) <<PK>>
+  --
+  * name : VARCHAR(64)
+  * is_active : BOOLEAN
+}
+
+entity "wallet" as wallet {
+  * id : UUID <<PK>>
+  --
+  * user_id : UUID <<FK>>
+  * currency_code : CHAR(3) <<FK>>
+  * balance : NUMERIC(19,4) CHECK >= 0
+  * version : BIGINT
+  * created_at : TIMESTAMPTZ
+  * updated_at : TIMESTAMPTZ
+  ..
+  UNIQUE (user_id, currency_code)
+}
+
+entity "exchange_rate" as exchange_rate {
+  * id : BIGINT <<PK>> (identity)
+  --
+  * currency_code : CHAR(3) <<FK>>
+  * table_no : VARCHAR(32)
+  * effective_date : DATE
+  * bid : NUMERIC(12,6)
+  * ask : NUMERIC(12,6)
+  * fetched_at : TIMESTAMPTZ
+  ..
+  UNIQUE (currency_code, effective_date)
+}
+
+entity "exchange_transaction" as exchange_transaction {
+  * id : UUID <<PK>>
+  --
+  * user_id : UUID <<FK>>
+  * operation_id : UUID
+  * type : VARCHAR(10) {DEPOSIT, BUY, SELL}
+  from_currency : CHAR(3) <<FK>> (NULL for DEPOSIT)
+  from_amount : NUMERIC(19,4) (NULL for DEPOSIT)
+  * to_currency : CHAR(3) <<FK>>
+  * to_amount : NUMERIC(19,4)
+  rate : NUMERIC(12,6) (NULL for DEPOSIT)
+  rate_id : BIGINT <<FK>> (NULL for DEPOSIT)
+  * created_at : TIMESTAMPTZ
+  ..
+  UNIQUE (user_id, operation_id)
+}
+
+entity "operation_record" as operation_record {
+  * user_id : UUID <<PK, FK>>
+  * operation_id : UUID <<PK>>
+  --
+  * operation_type : VARCHAR(10)
+  * request_hash : CHAR(64)
+  * outcome : VARCHAR(10) {COMPLETED, REJECTED}
+  * http_status : SMALLINT
+  * response_body : JSONB
+  transaction_id : UUID <<FK>> (NULL if REJECTED)
+  * created_at : TIMESTAMPTZ
+}
+
+app_user ||--|{ wallet : "owns"
+currency ||--o{ wallet : "denominates"
+currency ||--o{ exchange_rate : "quoted as"
+app_user ||--o{ exchange_transaction : "makes"
+currency |o--o{ exchange_transaction : "from"
+currency ||--o{ exchange_transaction : "to"
+exchange_rate |o--o{ exchange_transaction : "prices"
+app_user ||--o{ operation_record : "submits"
+exchange_transaction |o--o| operation_record : "result of"
+@enduml
