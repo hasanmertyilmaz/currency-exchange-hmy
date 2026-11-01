@@ -52,7 +52,7 @@ package "service.domain" {
     + requestHash(payload : Object) : String
   }
   class NbpClient {
-    - connectTimeout : Duration = 3 s
+    - connectTimeout : Duration = 2 s
     - readTimeout : Duration = 5 s
     + fetchTableC() : NbpTable
     + fetchHistory(code : String, from : LocalDate, to : LocalDate) : List<NbpRate>

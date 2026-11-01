@@ -12,23 +12,22 @@ database "Local cache" as Cache
 participant "ApiClient" as Api
 participant "Web service" as WS
 database "PostgreSQL" as DB
-participant "NBP API" as NBP
 
 User -> UI : open Rates
 UI -> Repo : currentRates()
 Repo -> Cache : load("rates:current")
 Cache --> Repo : cached table + fetchedAt (if any)
 Repo --> UI : show cached data, label "Cached · updated <time>"
-Repo -> Api : GET /api/v1/rates/current (timeout 8 s)
+Repo -> Api : GET /api/v1/rates/current (timeout 10 s)
 Api -> WS : HTTPS request
 WS -> DB : SELECT latest table C rows
-alt latest stored table older than refresh interval
-  WS -> NBP : GET /api/exchangerates/tables/C/?format=json
-  NBP --> WS : table C (bid / ask)
-  WS -> DB : INSERT ... ON CONFLICT DO NOTHING
-end
+note right of WS
+NBP is never called on this request path:
+the Scheduler (UC14) refreshes table C;
+if its last refresh failed, stale = true.
+end note
 DB --> WS : rate rows
-WS --> Api : 200 {tableNo, effectiveDate, fetchedAt, rates[]}
+WS --> Api : 200 {tableNo, effectiveDate, fetchedAt, stale, rates[]}
 Api --> Repo : RateTable
 Repo -> Cache : save("rates:current", data, now)
 Repo --> UI : show current data, label "Live · NBP table <tableNo>"

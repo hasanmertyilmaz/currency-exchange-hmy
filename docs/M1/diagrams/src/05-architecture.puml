@@ -32,7 +32,7 @@ rectangle "Web service (Java 21, Spring Boot 3)" as service #FFFFFF {
   component "Security filter\n(JWT, per-user scoping)" as sec
   component "REST controllers\n/api/v1" as ctrl
   component "Domain services\n(ExchangeService, RateService,\nIdempotencyService)" as svc
-  component "NbpClient\n(3 s connect / 5 s read)" as nbpc
+  component "NbpClient\n(2 s connect / 5 s read)" as nbpc
   component "Scheduler\n(rate refresh)" as sched
 }
 

@@ -13,7 +13,7 @@ hide empty members
 package "mobile.network" {
   class ApiClient {
     - baseUrl : string
-    - readTimeoutMs : number = 8000
+    - readTimeoutMs : number = 10000
     - writeTimeoutMs : number = 15000
     + get<T>(path : string) : Promise<T>
     + post<T>(path : string, body : object, operationId : UUID) : Promise<T>
