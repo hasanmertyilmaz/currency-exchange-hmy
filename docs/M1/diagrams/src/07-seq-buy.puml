@@ -23,24 +23,34 @@ Repo -> Api : POST /api/v1/exchanges\nIdempotency-Key: operationId (timeout 15 s
 Api -> WS : HTTPS request + JWT
 WS -> WS : validate JWT, body, amount limits
 WS -> DB : BEGIN
-WS -> DB : INSERT operation_record (user_id, operation_id, ...)
-note right of DB
-Primary key (user_id, operation_id) makes a
-concurrent duplicate wait, then conflict.
-Existing row -> return stored response (replay).
-end note
-WS -> DB : SELECT latest rate (EUR); compare table_no
+WS -> DB : INSERT wallet (user, EUR) ON CONFLICT DO NOTHING
 WS -> DB : SELECT wallets PLN, EUR FOR UPDATE\n(ordered by currency_code)
-alt PLN balance >= cost
-  WS -> DB : UPDATE wallet PLN -cost, EUR +100.00
-  WS -> DB : INSERT exchange_transaction
-  WS -> DB : UPDATE operation_record SET outcome = COMPLETED, response
-  WS -> DB : COMMIT
-  WS --> Api : 201 Created {transaction, balances}
-else insufficient funds
-  WS -> DB : UPDATE operation_record SET outcome = REJECTED, 422
-  WS -> DB : COMMIT (no wallet change)
-  WS --> Api : 422 INSUFFICIENT_FUNDS
+note right of DB
+Row locks serialise every data-changing
+request of the same user, including a
+concurrent duplicate with the same key.
+end note
+WS -> DB : SELECT operation_record\nWHERE (user_id, operation_id)
+alt record exists (duplicate / retry)
+  WS -> DB : COMMIT (nothing changed)
+  WS --> Api : stored status + body,\nheader Idempotent-Replayed: true
+else new operation
+  WS -> DB : SELECT latest EUR rate; compare table_no
+  alt rate table changed
+    WS -> DB : INSERT operation_record (REJECTED, 409)
+    WS -> DB : COMMIT
+    WS --> Api : 409 RATE_CHANGED (new rate in body)
+  else PLN balance >= cost
+    WS -> DB : UPDATE wallet PLN -cost, EUR +100.00
+    WS -> DB : INSERT exchange_transaction (operation_id)
+    WS -> DB : INSERT operation_record (COMPLETED, 201, body)
+    WS -> DB : COMMIT
+    WS --> Api : 201 Created {transaction, balances}
+  else insufficient funds
+    WS -> DB : INSERT operation_record (REJECTED, 422)
+    WS -> DB : COMMIT (no wallet change)
+    WS --> Api : 422 INSUFFICIENT_FUNDS
+  end
 end
 Api --> Repo : result
 Repo -> Journal : update(status = COMPLETED or REJECTED)

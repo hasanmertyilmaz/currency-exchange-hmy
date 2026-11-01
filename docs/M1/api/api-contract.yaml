@@ -1,0 +1,512 @@
+openapi: 3.1.0
+info:
+  title: Kantor Mobile Web Service API
+  version: 0.1.0-m1
+  summary: API contract outline for the Mobile Currency Exchange System (M1 design, not yet implemented).
+  description: |
+    Conventions
+    * Base path `/api/v1`, JSON over HTTPS (plain HTTP only on a local development network).
+    * Monetary amounts and rates are JSON **strings** with a fixed decimal scale ("100.00",
+      "4.2913") so that no client or server ever uses binary floating point for money.
+    * Timestamps are ISO 8601 in UTC (`2026-11-03T09:15:02Z`); dates are `YYYY-MM-DD`.
+    * Errors use RFC 9457 Problem Details (`application/problem+json`) extended with a stable
+      machine-readable `code`.
+    * Every data-changing request on wallets (`POST /deposits`, `POST /exchanges`) MUST carry an
+      `Idempotency-Key` header holding a client-generated UUID v4 (the *operation id*). The same
+      key with the same body always has exactly one effect; the stored response is replayed.
+    * GET requests are safe and may be retried by the client; POST requests are never retried
+      automatically with a new key.
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development (Docker Compose)
+tags:
+  - name: auth
+  - name: rates
+  - name: wallets
+  - name: transactions
+  - name: operations
+  - name: system
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Liveness probe used by the client after connectivity is restored
+      security: []
+      responses:
+        '200':
+          description: Service reachable
+          content:
+            application/json:
+              example: { status: UP, time: '2026-11-03T09:15:02Z' }
+
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Create an account; a PLN wallet with balance 0.00 is created in the same transaction
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+            example: { email: duygu@example.com, password: 'S3cure-pass', displayName: Duygu }
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: E-mail already registered (also returned if a lost-response retry repeats a successful registration; the client then offers login)
+          content:
+            application/problem+json:
+              example: { type: about:blank, title: Conflict, status: 409, code: EMAIL_TAKEN }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange credentials for a bearer access token (JWT, 24 h)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Token' }
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiJ9...
+                tokenType: Bearer
+                expiresAt: '2026-11-04T09:15:02Z'
+                user: { id: 9b2f6c1e-4a51-4c8e-9a3d-0f1b2c3d4e5f, email: duygu@example.com, displayName: Duygu }
+        '401':
+          description: Wrong e-mail or password
+          content:
+            application/problem+json:
+              example: { type: about:blank, title: Unauthorized, status: 401, code: INVALID_CREDENTIALS }
+
+  /me:
+    get:
+      tags: [auth]
+      summary: Current user profile
+      responses:
+        '200':
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /rates/current:
+    get:
+      tags: [rates]
+      summary: Latest NBP table C (bid/ask) for supported currencies
+      security: []
+      responses:
+        '200':
+          description: Latest stored table
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RateTable' }
+              example:
+                source: NBP table C
+                tableNo: 212/C/NBP/2026
+                effectiveDate: '2026-10-30'
+                fetchedAt: '2026-10-30T07:46:10Z'
+                stale: false
+                rates:
+                  - { code: EUR, name: Euro, bid: '4.2071', ask: '4.2921' }
+                  - { code: USD, name: US dollar, bid: '3.6512', ask: '3.7250' }
+        '503':
+          description: No rate table stored yet and NBP unreachable
+          content:
+            application/problem+json:
+              example: { type: about:blank, title: Service Unavailable, status: 503, code: RATES_UNAVAILABLE }
+
+  /rates/{code}/history:
+    get:
+      tags: [rates]
+      summary: Historical table C rates for one currency (range at most 93 days, NBP limit)
+      security: []
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string, pattern: '^[A-Z]{3}$' }, example: EUR }
+        - { name: from, in: query, required: true, schema: { type: string, format: date }, example: '2026-10-01' }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, example: '2026-10-30' }
+      responses:
+        '200':
+          description: Rate points ordered by date (NBP publishes on business days only)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RateHistory' }
+              example:
+                code: EUR
+                from: '2026-10-01'
+                to: '2026-10-30'
+                points:
+                  - { effectiveDate: '2026-10-29', tableNo: 211/C/NBP/2026, bid: '4.2088', ask: '4.2938' }
+                  - { effectiveDate: '2026-10-30', tableNo: 212/C/NBP/2026, bid: '4.2071', ask: '4.2921' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404':
+          description: Unsupported currency code
+          content:
+            application/problem+json:
+              example: { type: about:blank, title: Not Found, status: 404, code: CURRENCY_NOT_SUPPORTED }
+        '503':
+          description: NBP unreachable and range not stored locally
+          content:
+            application/problem+json:
+              example: { type: about:blank, title: Service Unavailable, status: 503, code: RATES_UNAVAILABLE }
+
+  /wallets:
+    get:
+      tags: [wallets]
+      summary: Balances of all wallets of the authenticated user
+      responses:
+        '200':
+          description: Authoritative balances
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletList' }
+              example:
+                asOf: '2026-11-03T09:15:02Z'
+                wallets:
+                  - { currency: PLN, balance: '570.79', updatedAt: '2026-11-03T09:14:55Z' }
+                  - { currency: EUR, balance: '100.00', updatedAt: '2026-11-03T09:14:55Z' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /deposits:
+    post:
+      tags: [transactions]
+      summary: Add simulated (virtual) PLN funds to the PLN wallet
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DepositRequest' }
+            example: { amount: '1000.00', currency: PLN }
+      responses:
+        '201': { $ref: '#/components/responses/TransactionCreated' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '409': { $ref: '#/components/responses/IdempotencyConflict' }
+
+  /exchanges:
+    post:
+      tags: [transactions]
+      summary: Buy or sell a foreign currency against PLN at the current NBP table C rate
+      description: |
+        BUY: the user receives `amount` of `currency` and pays `amount × ask` PLN.
+        SELL: the user gives `amount` of `currency` and receives `amount × bid` PLN.
+        PLN results are rounded HALF_UP to 2 decimal places. `rateTableNo` is the table the user
+        confirmed; if the server's latest table differs the request is rejected with RATE_CHANGED.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExchangeRequest' }
+            example: { side: BUY, currency: EUR, amount: '100.00', rateTableNo: 212/C/NBP/2026 }
+      responses:
+        '201': { $ref: '#/components/responses/TransactionCreated' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '409':
+          description: RATE_CHANGED (body carries the new table) or IDEMPOTENCY_CONFLICT
+          content:
+            application/problem+json:
+              example:
+                type: about:blank
+                title: Conflict
+                status: 409
+                code: RATE_CHANGED
+                detail: Rates were updated. Please review the new price.
+                operationId: 7f3c2a90-1b4e-4d8f-9c11-5e6a7b8c9d0e
+                currentRate: { code: EUR, tableNo: 213/C/NBP/2026, bid: '4.2150', ask: '4.3000' }
+        '422':
+          description: Business rule violation, outcome stored and replayed for the same key
+          content:
+            application/problem+json:
+              example:
+                type: about:blank
+                title: Unprocessable Content
+                status: 422
+                code: INSUFFICIENT_FUNDS
+                detail: PLN balance 120.00 is lower than the required 429.21.
+                operationId: 7f3c2a90-1b4e-4d8f-9c11-5e6a7b8c9d0e
+        '503':
+          description: Latest stored rate table older than 5 days and NBP unreachable (not stored; safe to retry later)
+          content:
+            application/problem+json:
+              example: { type: about:blank, title: Service Unavailable, status: 503, code: RATES_UNAVAILABLE }
+
+  /transactions:
+    get:
+      tags: [transactions]
+      summary: Transaction history of the authenticated user, newest first
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: size, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: One page of transactions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransactionPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /operations/{operationId}:
+    get:
+      tags: [operations]
+      summary: Reconciliation — authoritative outcome of a data-changing request
+      description: |
+        Used by the client after a timeout or lost response. 200 means the server processed the
+        operation (COMPLETED or REJECTED; `response` is the stored body). 404 means the server
+        has no record: the request never arrived or its transaction rolled back, so the same
+        request can be re-sent with the same Idempotency-Key.
+      parameters:
+        - { name: operationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Stored outcome
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationStatus' }
+              example:
+                operationId: 7f3c2a90-1b4e-4d8f-9c11-5e6a7b8c9d0e
+                type: SELL
+                outcome: COMPLETED
+                httpStatus: 201
+                processedAt: '2026-11-03T09:14:55Z'
+                response: { transaction: { id: 0d6e2f4a-8b1c-4e7d-a2f3-6b5c4d3e2f1a, type: SELL } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404':
+          description: No record for this user and operation id
+          content:
+            application/problem+json:
+              example: { type: about:blank, title: Not Found, status: 404, code: OPERATION_NOT_FOUND }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-generated UUID v4, created once when the user confirms the action and reused for every resend of that action.
+      schema: { type: string, format: uuid }
+      example: 7f3c2a90-1b4e-4d8f-9c11-5e6a7b8c9d0e
+
+  responses:
+    TransactionCreated:
+      description: |
+        Operation executed. For a duplicate request with the same key and body the same status
+        and body are returned with header `Idempotent-Replayed: true` and no new effect.
+      headers:
+        Idempotent-Replayed:
+          schema: { type: boolean }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/TransactionResult' }
+          example:
+            operationId: 7f3c2a90-1b4e-4d8f-9c11-5e6a7b8c9d0e
+            transaction:
+              id: 0d6e2f4a-8b1c-4e7d-a2f3-6b5c4d3e2f1a
+              type: BUY
+              fromCurrency: PLN
+              fromAmount: '429.21'
+              toCurrency: EUR
+              toAmount: '100.00'
+              rate: '4.2921'
+              rateTableNo: 212/C/NBP/2026
+              createdAt: '2026-11-03T09:14:55Z'
+            balances:
+              - { currency: PLN, balance: '570.79' }
+              - { currency: EUR, balance: '100.00' }
+    ValidationError:
+      description: Request body or parameters invalid (never stored; nothing changed)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: about:blank
+            title: Bad Request
+            status: 400
+            code: VALIDATION_ERROR
+            errors: [ { field: amount, message: must have at most 2 decimal places } ]
+    Unauthenticated:
+      description: Missing, invalid or expired token
+      content:
+        application/problem+json:
+          example: { type: about:blank, title: Unauthorized, status: 401, code: UNAUTHENTICATED }
+    IdempotencyConflict:
+      description: The Idempotency-Key was already used with a different request body
+      content:
+        application/problem+json:
+          example: { type: about:blank, title: Conflict, status: 409, code: IDEMPOTENCY_CONFLICT }
+
+  schemas:
+    Money:
+      type: string
+      pattern: '^\d{1,15}(\.\d{1,2})?$'
+      description: Decimal amount as a string, at most 2 decimal places on input.
+    Rate:
+      type: string
+      pattern: '^\d{1,6}\.\d{1,6}$'
+    RegisterRequest:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 8, maxLength: 72 }
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        displayName: { type: string }
+    Token:
+      type: object
+      properties:
+        accessToken: { type: string }
+        tokenType: { type: string, const: Bearer }
+        expiresAt: { type: string, format: date-time }
+        user: { $ref: '#/components/schemas/User' }
+    RateTable:
+      type: object
+      properties:
+        source: { type: string }
+        tableNo: { type: string }
+        effectiveDate: { type: string, format: date }
+        fetchedAt: { type: string, format: date-time }
+        stale: { type: boolean, description: true if NBP could not be reached at the last scheduled refresh }
+        rates:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string }
+              name: { type: string }
+              bid: { $ref: '#/components/schemas/Rate' }
+              ask: { $ref: '#/components/schemas/Rate' }
+    RateHistory:
+      type: object
+      properties:
+        code: { type: string }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        points:
+          type: array
+          items:
+            type: object
+            properties:
+              effectiveDate: { type: string, format: date }
+              tableNo: { type: string }
+              bid: { $ref: '#/components/schemas/Rate' }
+              ask: { $ref: '#/components/schemas/Rate' }
+    WalletList:
+      type: object
+      properties:
+        asOf: { type: string, format: date-time }
+        wallets:
+          type: array
+          items:
+            type: object
+            properties:
+              currency: { type: string }
+              balance: { $ref: '#/components/schemas/Money' }
+              updatedAt: { type: string, format: date-time }
+    DepositRequest:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { $ref: '#/components/schemas/Money', description: '1.00 – 100000.00' }
+        currency: { type: string, const: PLN }
+    ExchangeRequest:
+      type: object
+      required: [side, currency, amount, rateTableNo]
+      properties:
+        side: { type: string, enum: [BUY, SELL] }
+        currency: { type: string, pattern: '^[A-Z]{3}$', description: Supported non-PLN currency }
+        amount: { $ref: '#/components/schemas/Money', description: Foreign-currency amount, 1.00 – 1000000.00 }
+        rateTableNo: { type: string }
+    Transaction:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        operationId: { type: string, format: uuid }
+        type: { type: string, enum: [DEPOSIT, BUY, SELL] }
+        fromCurrency: { type: [string, 'null'] }
+        fromAmount: { oneOf: [ { $ref: '#/components/schemas/Money' }, { type: 'null' } ] }
+        toCurrency: { type: string }
+        toAmount: { $ref: '#/components/schemas/Money' }
+        rate: { oneOf: [ { $ref: '#/components/schemas/Rate' }, { type: 'null' } ] }
+        rateTableNo: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+    TransactionResult:
+      type: object
+      properties:
+        operationId: { type: string, format: uuid }
+        transaction: { $ref: '#/components/schemas/Transaction' }
+        balances:
+          type: array
+          items:
+            type: object
+            properties:
+              currency: { type: string }
+              balance: { $ref: '#/components/schemas/Money' }
+    TransactionPage:
+      type: object
+      properties:
+        page: { type: integer }
+        size: { type: integer }
+        totalItems: { type: integer }
+        asOf: { type: string, format: date-time }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Transaction' }
+    OperationStatus:
+      type: object
+      properties:
+        operationId: { type: string, format: uuid }
+        type: { type: string, enum: [DEPOSIT, BUY, SELL] }
+        outcome: { type: string, enum: [COMPLETED, REJECTED] }
+        httpStatus: { type: integer }
+        processedAt: { type: string, format: date-time }
+        response: { type: object, description: Stored response body, identical to the original reply }
+    Problem:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string }
+        detail: { type: string }
+        operationId: { type: string, format: uuid }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+
+security:
+  - bearerAuth: []
