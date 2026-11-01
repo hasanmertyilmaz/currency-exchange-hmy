@@ -1,0 +1,29 @@
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# Secrets and local configuration (never commit)
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+
+# Mobile (Expo / React Native)
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+
+# Backend (Spring Boot / Gradle / Maven)
+backend/build/
+backend/target/
+backend/.gradle/
+backend/out/
+
+# Documentation build tooling
+docs/build/node_modules/
+docs/build/.cache/
+docs/build/tools/
