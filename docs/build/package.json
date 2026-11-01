@@ -1,0 +1,12 @@
+{
+  "name": "nims-m1-report-build",
+  "private": true,
+  "description": "Generates the M1 report (DOCX and PDF) from report-content.js",
+  "scripts": {
+    "build": "node build-report.js"
+  },
+  "dependencies": {
+    "docx": "^9.0.0",
+    "puppeteer-core": "^23.0.0"
+  }
+}
