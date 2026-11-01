@@ -32,7 +32,8 @@ This team selected:
 ## Repository layout
 
 ```
-docs/      design documentation per milestone (M1: analysis & design)
+docs/M1/   M1 analysis & design: report (PDF/DOCX), diagrams, schema, API contract
+docs/build report generator (single source for DOCX and PDF)
 mobile/    Expo client (implementation starts in Week 6)
 backend/   Spring Boot web service (implementation starts in Week 5)
 ```
@@ -41,7 +42,7 @@ backend/   Spring Boot web service (implementation starts in Week 5)
 
 | Milestone | Teaching-week checkpoint | Status |
 |---|---|---|
-| M1 — Analysis & Design | after Week 4 | in progress |
+| M1 — Analysis & Design | after Week 4 | design complete — tag `m1`, see [`docs/M1`](docs/M1) |
 | M2 — Working client/server prototype | after Week 8 | not started |
 | M3 — Network-resilient application | after Week 13 | not started |
 | M4 — Final system and presentation | after Week 15 | not started |
